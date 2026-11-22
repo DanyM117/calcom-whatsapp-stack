@@ -1,0 +1,15 @@
+# Secretos y configuración local
+.env
+.env.*
+!.env.example
+
+# Código fuente externo de Cal.com (clonado en build time por bootstrap.sh)
+calcom-src/
+
+# Python y respaldos
+venv*/
+.venv/
+__pycache__/
+*.py[cod]
+*.sql.gz
+backup_*.sql

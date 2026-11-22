@@ -1,0 +1,120 @@
+name: calcom-stack
+
+x-logging: &default-logging
+  driver: "json-file"
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+volumes:
+  database-data:
+  redis-data:
+  certs:
+
+networks:
+  stack:
+
+services:
+  database:
+    container_name: database
+    image: postgres:16-alpine
+    restart: always
+    logging: *default-logging
+    volumes:
+      - database-data:/var/lib/postgresql/data/
+    env_file: .env
+    networks:
+      - stack
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    container_name: redis
+    image: redis:7-alpine
+    restart: always
+    logging: *default-logging
+    volumes:
+      - redis-data:/data
+    networks:
+      - stack
+
+  calcom:
+    image: calcom/cal.com:latest
+    container_name: calcom
+    restart: always
+    logging: *default-logging
+    networks:
+      - stack
+    env_file: .env
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - DATABASE_DIRECT_URL=${DATABASE_DIRECT_URL}
+      - NEXT_PUBLIC_WEBAPP_URL=${NEXT_PUBLIC_WEBAPP_URL}
+    depends_on:
+      database:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  calcom-api:
+    container_name: calcom-api
+    build:
+      context: ./calcom-src
+      dockerfile: apps/api/v2/Dockerfile
+      args:
+        DATABASE_URL: ${DATABASE_URL}
+        DATABASE_DIRECT_URL: ${DATABASE_DIRECT_URL}
+    restart: always
+    logging: *default-logging
+    networks:
+      - stack
+    env_file: .env
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - DATABASE_DIRECT_URL=${DATABASE_DIRECT_URL}
+    depends_on:
+      database:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  whatsapp-agent:
+    container_name: whatsapp-agent
+    build:
+      context: ./agent
+      dockerfile: Dockerfile
+    restart: always
+    logging: *default-logging
+    networks:
+      - stack
+    env_file: .env
+    environment:
+      - AWS_REGION=${AWS_REGION:-us-east-1}
+      - REDIS_URL=redis://redis:6379
+      - API_URL=http://calcom-api:80
+    depends_on:
+      redis:
+        condition: service_started
+      calcom-api:
+        condition: service_started
+
+  nginx:
+    image: nginx:alpine
+    container_name: calcom-nginx
+    restart: always
+    logging: *default-logging
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - certs:/etc/letsencrypt
+    depends_on:
+      - calcom
+      - calcom-api
+      - whatsapp-agent
+    networks:
+      - stack
